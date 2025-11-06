@@ -3,54 +3,61 @@ from pydantic import BaseModel
 from typing import List
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import motor.motor_asyncio
 import pandas as pd
+import os
 
 app = FastAPI(title="User Recommendation API (MongoDB-Compatible)")
 
-# ------------------------------------------------------
-# 🔹 Data Model (matching your MongoDB Mongoose schema)
-# ------------------------------------------------------
-class User(BaseModel):
-    user_id: int                   # Used only for identification in API
+# MongoDB connection (replace with your MongoDB URI)
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
+db = client.college_community
+users_collection = db.users
+
+# Pydantic model for response
+class RecommendedUser(BaseModel):
+    user_id: str
     name: str
     email: str
     branch: str
-    year: str                      # e.g., "1st", "2nd", "3rd", "4th"
-    interests: List[str]           # List of strings like ["AI", "Web Development"]
+    year: str
+    interests: List[str]
+    similarity_score: float
 
-# ------------------------------------------------------
-# 🔹 API Endpoint: Recommend similar users
-# ------------------------------------------------------
 @app.post("/recommend_users/")
-def recommend_users_api(users: List[User], user_id: int, top_n: int = 10):
-    # Convert to DataFrame
-    users_df = pd.DataFrame([u.dict() for u in users])
+async def recommend_users_api(user_id: str, top_n: int = 10):
+    # Fetch all users from MongoDB
+    users_cursor = users_collection.find({}, {"_id": 1, "name": 1, "email": 1, "branch": 1, "year": 1, "interests": 1})
+    users_list = await users_cursor.to_list(length=1000)
 
-    # Ensure valid user_id
-    if user_id not in users_df["user_id"].values:
+    if not users_list:
+        return {"error": "No users found in database."}
+
+    # Map MongoDB _id to string user_id
+    for user in users_list:
+        user["user_id"] = str(user["_id"])
+
+    # Check if user exists
+    if user_id not in [u["user_id"] for u in users_list]:
         return {"error": f"User with id {user_id} not found."}
 
-    # Join list of interests into a single string for TF-IDF processing
+    # Create DataFrame
+    users_df = pd.DataFrame(users_list)
     users_df["interests_text"] = users_df["interests"].apply(lambda x: " ".join(x))
 
-    # TF-IDF Vectorization based on interests
+    # TF-IDF and similarity
     vectorizer = TfidfVectorizer(stop_words="english")
     vectors = vectorizer.fit_transform(users_df["interests_text"])
-
-    # Compute cosine similarity matrix
     similarity = cosine_similarity(vectors)
 
-    # Find target user index
     user_index = users_df[users_df["user_id"] == user_id].index[0]
-
-    # Compute similarity scores for all other users
     sim_scores = list(enumerate(similarity[user_index]))
     sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
 
-    # Get top N similar users (excluding the target user itself)
     top_users = [
         {
-            "user_id": int(users_df.iloc[i[0]]["user_id"]),
+            "user_id": users_df.iloc[i[0]]["user_id"],
             "name": users_df.iloc[i[0]]["name"],
             "email": users_df.iloc[i[0]]["email"],
             "branch": users_df.iloc[i[0]]["branch"],
@@ -61,22 +68,11 @@ def recommend_users_api(users: List[User], user_id: int, top_n: int = 10):
         for i in sim_scores[1: top_n + 1]
     ]
 
-    # Return result
     return {
-        "requested_user": {
-            "user_id": int(users_df.iloc[user_index]["user_id"]),
-            "name": users_df.iloc[user_index]["name"],
-            "email": users_df.iloc[user_index]["email"],
-            "branch": users_df.iloc[user_index]["branch"],
-            "year": users_df.iloc[user_index]["year"],
-            "interests": users_df.iloc[user_index]["interests"]
-        },
+        "requested_user": users_df.iloc[user_index].to_dict(),
         "recommended_users": top_users
     }
 
-# ------------------------------------------------------
-# 🔹 Root Route
-# ------------------------------------------------------
 @app.get("/")
 def home():
-    return {"message": "User Recommendation API (MongoDB Compatible) is running 🚀"}
+    return {"message": "User Recommendation API is running 🚀"}
