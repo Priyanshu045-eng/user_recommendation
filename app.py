@@ -11,9 +11,20 @@ app = FastAPI(title="User Recommendation API (MongoDB-Compatible)")
 
 # MongoDB connection (replace with your MongoDB URI)
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+print("MONGO_URI =", MONGO_URI)
+
 client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
 db = client.college_community
 users_collection = db.users
+
+# ✅ Startup event to verify MongoDB connection
+@app.on_event("startup")
+async def startup_db_client():
+    try:
+        await client.admin.command('ping')
+        print("✅ MongoDB connected successfully!")
+    except Exception as e:
+        print("❌ MongoDB connection failed:", e)
 
 # Pydantic model for response
 class RecommendedUser(BaseModel):
@@ -85,4 +96,3 @@ async def recommend_users_api(user_id: str, top_n: int = 10):
 @app.get("/")
 def home():
     return {"message": "User Recommendation API is running 🚀"}
-
