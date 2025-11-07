@@ -5,7 +5,11 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import motor.motor_asyncio
 import pandas as pd
+from dotenv import load_dotenv
 import os
+
+
+load_dotenv() 
 
 app = FastAPI(title="User Recommendation API (MongoDB-Compatible)")
 
@@ -14,7 +18,7 @@ MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 print("MONGO_URI =", MONGO_URI)
 
 client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
-db = client.college_community
+db = client["auth-db"]
 users_collection = db.users
 
 # ✅ Startup event to verify MongoDB connection
